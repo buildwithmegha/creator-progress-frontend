@@ -1,8 +1,61 @@
 "use client";
+import { GoogleLogin } from "@react-oauth/google";
+import { apiFetch } from "../lib/api";
 
 import { motion } from "framer-motion";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { registerUser } from "../lib/auth";
+import { setToken } from "../lib/token";
 
 export default function RegisterPage() {
+  const router = useRouter();
+
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleRegister() {
+    setError("");
+
+    if (
+      !name.trim() ||
+      !email.trim() ||
+      !password.trim() ||
+      !confirmPassword.trim()
+    ) {
+      setError("Please fill all fields.");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const res = await registerUser({
+        name: name.trim(),
+        email: email.trim(),
+        password,
+      });
+
+      setToken(res.token);
+
+      router.push("/app");
+    } catch (e: any) {
+      setError(e?.message || "Registration failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <main className="relative min-h-screen soft-bg overflow-hidden">
       <div className="absolute inset-0 soft-waves" />
@@ -44,7 +97,7 @@ export default function RegisterPage() {
               <div className="mt-7 text-sm text-slate-500 space-y-2">
                 <div>📝 Daily logs that actually feel good</div>
                 <div>🔥 Streaks without pressure</div>
-                <div>📊 Clean dashboard & progress view</div>
+                <div>📊 Premium dashboard view</div>
               </div>
             </div>
 
@@ -55,6 +108,13 @@ export default function RegisterPage() {
               </h2>
 
               <div className="mt-6 space-y-4">
+                {/* Error */}
+                {error ? (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    {error}
+                  </div>
+                ) : null}
+
                 {/* Name */}
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
@@ -63,6 +123,8 @@ export default function RegisterPage() {
                   <input
                     type="text"
                     placeholder="Enter your name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
                     className="w-full rounded-2xl soft-input px-11 py-3.5 text-slate-700 outline-none focus:ring-2 focus:ring-indigo-400/60 transition"
                   />
                 </div>
@@ -75,6 +137,8 @@ export default function RegisterPage() {
                   <input
                     type="email"
                     placeholder="Enter your email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                     className="w-full rounded-2xl soft-input px-11 py-3.5 text-slate-700 outline-none focus:ring-2 focus:ring-indigo-400/60 transition"
                   />
                 </div>
@@ -87,11 +151,13 @@ export default function RegisterPage() {
                   <input
                     type="password"
                     placeholder="Create a password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
                     className="w-full rounded-2xl soft-input px-11 py-3.5 text-slate-700 outline-none focus:ring-2 focus:ring-indigo-400/60 transition"
                   />
                 </div>
 
-                {/* Confirm Password */}
+                {/* Confirm */}
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
                     ✅
@@ -99,6 +165,8 @@ export default function RegisterPage() {
                   <input
                     type="password"
                     placeholder="Confirm password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
                     className="w-full rounded-2xl soft-input px-11 py-3.5 text-slate-700 outline-none focus:ring-2 focus:ring-indigo-400/60 transition"
                   />
                 </div>
@@ -107,9 +175,11 @@ export default function RegisterPage() {
                 <motion.button
                   whileHover={{ y: -2 }}
                   whileTap={{ scale: 0.98 }}
-                  className="w-full rounded-2xl py-3.5 text-white font-semibold btn-grad"
+                  onClick={handleRegister}
+                  disabled={loading}
+                  className="w-full rounded-2xl py-3.5 text-white font-semibold btn-grad disabled:opacity-60"
                 >
-                  Create Account
+                  {loading ? "Creating..." : "Create Account"}
                 </motion.button>
 
                 {/* Divider */}
@@ -119,10 +189,11 @@ export default function RegisterPage() {
                   <div className="h-px bg-slate-200 flex-1" />
                 </div>
 
-                {/* Google */}
-                <motion.button
+                {/* Google (UI only for now) */}
+                {/* <motion.button
                   whileHover={{ y: -2 }}
                   whileTap={{ scale: 0.98 }}
+                  onClick={() => setError("Google login will be added next 🚀")}
                   className="w-full rounded-2xl py-3.5 bg-white/80 border border-slate-200 shadow-sm hover:shadow-md transition flex items-center justify-center gap-3"
                 >
                   <img
@@ -133,7 +204,37 @@ export default function RegisterPage() {
                   <span className="font-semibold text-slate-700">
                     Continue with Google
                   </span>
-                </motion.button>
+                </motion.button> */}
+                <div className="w-full flex justify-center">
+                  <GoogleLogin
+                    onSuccess={async (credentialResponse) => {
+                      try {
+                        setError("");
+                        setLoading(true);
+
+                        const idToken = credentialResponse.credential;
+                        if (!idToken) throw new Error("Google signup failed.");
+
+                        const res = await apiFetch<{
+                          token: string;
+                          name: string;
+                          email: string;
+                        }>("/auth/google", {
+                          method: "POST",
+                          body: JSON.stringify({ idToken }),
+                        });
+
+                        setToken(res.token);
+                        router.push("/app");
+                      } catch (e: any) {
+                        setError(e?.message || "Google signup failed");
+                      } finally {
+                        setLoading(false);
+                      }
+                    }}
+                    onError={() => setError("Google signup failed")}
+                  />
+                </div>
 
                 {/* Footer */}
                 <div className="pt-2 text-center text-slate-500">

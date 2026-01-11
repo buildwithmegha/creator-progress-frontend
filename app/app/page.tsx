@@ -2,6 +2,9 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { logout, requireAuth } from "../lib/authClient";
 
 type LogItem = {
   id: string;

@@ -1,20 +1,16 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
-import { logout, requireAuth } from "../lib/authClient";
 
-type LogItem = {
-  id: string;
-  title: string;
-  desc?: string;
-  date: string;
-  tag: "work" | "content" | "study";
-};
+import { getMe } from "../lib/session";
+import { logoutUser } from "../lib/auth";
+import { fetchLogs, createLog, deleteLog, LogItem } from "../lib/logs";
+import { fetchStats, StatsResponse } from "../lib/stats";
 
-function formatDate(d: Date) {
+function formatDate(iso: string) {
+  const d = new Date(iso);
   return d.toLocaleDateString("en-US", {
     month: "short",
     day: "2-digit",
@@ -25,11 +21,11 @@ function formatDate(d: Date) {
 function TagPill({ tag }: { tag: LogItem["tag"] }) {
   const meta = useMemo(() => {
     switch (tag) {
-      case "work":
+      case "WORK":
         return { label: "Work", cls: "bg-indigo-100 text-indigo-700" };
-      case "content":
+      case "CONTENT":
         return { label: "Content", cls: "bg-purple-100 text-purple-700" };
-      case "study":
+      case "STUDY":
         return { label: "Study", cls: "bg-blue-100 text-blue-700" };
       default:
         return { label: "Tag", cls: "bg-slate-100 text-slate-700" };
@@ -49,23 +45,33 @@ function AddProgressModal({
   open,
   onClose,
   onAdd,
+  saving,
 }: {
   open: boolean;
   onClose: () => void;
-  onAdd: (log: Omit<LogItem, "id" | "date">) => void;
+  onAdd: (log: {
+    title: string;
+    description?: string;
+    tag: LogItem["tag"];
+  }) => void;
+  saving: boolean;
 }) {
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
-  const [tag, setTag] = useState<LogItem["tag"]>("work");
+  const [tag, setTag] = useState<LogItem["tag"]>("WORK");
 
   function handleSubmit() {
     if (!title.trim()) return;
-    onAdd({ title: title.trim(), desc: desc.trim(), tag });
-    setTitle("");
-    setDesc("");
-    setTag("work");
-    onClose();
+    onAdd({ title: title.trim(), description: desc.trim(), tag });
   }
+
+  useEffect(() => {
+    if (!open) {
+      setTitle("");
+      setDesc("");
+      setTag("WORK");
+    }
+  }, [open]);
 
   return (
     <AnimatePresence>
@@ -76,13 +82,11 @@ function AddProgressModal({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
-          {/* backdrop */}
           <div
             className="absolute inset-0 bg-black/30 backdrop-blur-sm"
-            onClick={onClose}
+            onClick={() => !saving && onClose()}
           />
 
-          {/* modal */}
           <motion.div
             initial={{ opacity: 0, y: 14, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -102,7 +106,8 @@ function AddProgressModal({
 
               <button
                 onClick={onClose}
-                className="w-10 h-10 rounded-2xl bg-white/70 border border-slate-200 hover:shadow transition"
+                disabled={saving}
+                className="w-10 h-10 rounded-2xl bg-white/70 border border-slate-200 hover:shadow transition disabled:opacity-60"
                 aria-label="Close"
               >
                 ✕
@@ -116,9 +121,10 @@ function AddProgressModal({
                 </label>
                 <input
                   value={title}
+                  disabled={saving}
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="e.g. Completed Google OAuth integration"
-                  className="mt-2 w-full rounded-2xl soft-input px-4 py-3 text-slate-800 outline-none focus:ring-2 focus:ring-indigo-400/60 transition"
+                  className="mt-2 w-full rounded-2xl soft-input px-4 py-3 text-slate-800 outline-none focus:ring-2 focus:ring-indigo-400/60 transition disabled:opacity-60"
                 />
               </div>
 
@@ -128,10 +134,11 @@ function AddProgressModal({
                 </label>
                 <textarea
                   value={desc}
+                  disabled={saving}
                   onChange={(e) => setDesc(e.target.value)}
                   placeholder="Add a short note..."
                   rows={4}
-                  className="mt-2 w-full rounded-2xl soft-input px-4 py-3 text-slate-800 outline-none focus:ring-2 focus:ring-indigo-400/60 transition resize-none"
+                  className="mt-2 w-full rounded-2xl soft-input px-4 py-3 text-slate-800 outline-none focus:ring-2 focus:ring-indigo-400/60 transition resize-none disabled:opacity-60"
                 />
               </div>
 
@@ -140,19 +147,20 @@ function AddProgressModal({
                   Tag
                 </label>
 
-                {(["work", "content", "study"] as const).map((t) => (
+                {(["WORK", "CONTENT", "STUDY"] as const).map((t) => (
                   <button
                     key={t}
+                    disabled={saving}
                     onClick={() => setTag(t)}
-                    className={`px-4 py-2 rounded-full text-sm font-semibold border transition ${
+                    className={`px-4 py-2 rounded-full text-sm font-semibold border transition disabled:opacity-60 ${
                       tag === t
                         ? "bg-indigo-600 text-white border-indigo-600 shadow-md"
                         : "bg-white/70 text-slate-700 border-slate-200 hover:shadow"
                     }`}
                   >
-                    {t === "work"
+                    {t === "WORK"
                       ? "Work"
-                      : t === "content"
+                      : t === "CONTENT"
                       ? "Content"
                       : "Study"}
                   </button>
@@ -163,7 +171,8 @@ function AddProgressModal({
             <div className="mt-7 flex items-center justify-end gap-3">
               <button
                 onClick={onClose}
-                className="px-5 py-2.5 rounded-2xl bg-white/70 border border-slate-200 text-slate-700 font-semibold hover:shadow transition"
+                disabled={saving}
+                className="px-5 py-2.5 rounded-2xl bg-white/70 border border-slate-200 text-slate-700 font-semibold hover:shadow transition disabled:opacity-60"
               >
                 Cancel
               </button>
@@ -171,9 +180,10 @@ function AddProgressModal({
                 whileHover={{ y: -2 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={handleSubmit}
-                className="px-6 py-2.5 rounded-2xl btn-grad text-white font-semibold"
+                disabled={saving}
+                className="px-6 py-2.5 rounded-2xl btn-grad text-white font-semibold disabled:opacity-60"
               >
-                Add Progress
+                {saving ? "Saving..." : "Add Progress"}
               </motion.button>
             </div>
           </motion.div>
@@ -184,50 +194,113 @@ function AddProgressModal({
 }
 
 export default function AppDashboardPage() {
+  const router = useRouter();
+
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [loadingLogs, setLoadingLogs] = useState(true);
+  const [savingLog, setSavingLog] = useState(false);
+
+  const [user, setUser] = useState<{ name: string; email: string } | null>(
+    null
+  );
+  const [stats, setStats] = useState<StatsResponse | null>(null);
+
   const [modalOpen, setModalOpen] = useState(false);
 
-  const [logs, setLogs] = useState<LogItem[]>([
-    {
-      id: "1",
-      title: "Designed premium landing + dashboard UI",
-      desc: "Matched the mockup style (glass, waves, gradients).",
-      date: "Apr 24, 2024",
-      tag: "work",
-    },
-    {
-      id: "2",
-      title: "Worked on YouTube storytelling hook ideas",
-      desc: "Keeping it simple: progress + consistency theme.",
-      date: "Apr 25, 2024",
-      tag: "content",
-    },
-    {
-      id: "3",
-      title: "Studied Spring Security basics",
-      desc: "",
-      date: "Apr 26, 2024",
-      tag: "study",
-    },
-  ]);
+  const [logs, setLogs] = useState<LogItem[]>([]);
+  const [error, setError] = useState("");
 
-  const streak = 5;
-  const daysLogged = logs.length;
-  const words = logs.reduce(
-    (acc, l) => acc + (l.title.length + (l.desc?.length || 0)),
-    0
-  );
+  // ✅ Auth check + load logs + load stats
+  useEffect(() => {
+    async function init() {
+      try {
+        setError("");
 
-  const handleAdd = (log: Omit<LogItem, "id" | "date">) => {
-    const now = new Date();
-    setLogs((prev) => [
-      {
-        id: crypto.randomUUID(),
-        date: formatDate(now),
-        ...log,
-      },
-      ...prev,
-    ]);
-  };
+        const me = await getMe();
+        setUser(me);
+
+        const [dbLogs, dbStats] = await Promise.all([
+          fetchLogs(),
+          fetchStats(),
+        ]);
+
+        setLogs(dbLogs);
+        setStats(dbStats);
+      } catch (e) {
+        router.replace("/login");
+      } finally {
+        setCheckingAuth(false);
+        setLoadingLogs(false);
+      }
+    }
+    init();
+  }, [router]);
+
+  async function refreshStats() {
+    try {
+      const s = await fetchStats();
+      setStats(s);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function handleAdd(log: {
+    title: string;
+    description?: string;
+    tag: LogItem["tag"];
+  }) {
+    try {
+      setSavingLog(true);
+      setError("");
+
+      const created = await createLog({
+        title: log.title,
+        description: log.description,
+        tag: log.tag,
+      });
+
+      setLogs((prev) => [created, ...prev]);
+      setModalOpen(false);
+
+      await refreshStats();
+    } catch (e: any) {
+      setError(e?.message || "Failed to save progress");
+    } finally {
+      setSavingLog(false);
+    }
+  }
+
+  async function handleDelete(id: number) {
+    try {
+      setError("");
+      await deleteLog(id);
+      setLogs((prev) => prev.filter((x) => x.id !== id));
+
+      await refreshStats();
+    } catch (e: any) {
+      setError(e?.message || "Something went wrong");
+    }
+  }
+
+  if (checkingAuth) {
+    return (
+      <main className="relative min-h-screen soft-bg overflow-hidden">
+        <div className="absolute inset-0 soft-waves" />
+        <div className="relative z-10 min-h-screen flex items-center justify-center px-6">
+          <div className="glass rounded-3xl px-8 py-6 text-slate-700 font-semibold">
+            Loading your dashboard...
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  const currentStreak = stats?.currentStreak ?? 0;
+  const daysLogged = stats?.daysLogged ?? 0;
+  const totalWords = stats?.totalWords ?? 0;
+  const progressThisWeek = stats?.progressThisWeek ?? 0;
+  const weeklyTarget = stats?.weeklyTarget ?? 7;
 
   return (
     <main className="relative min-h-screen soft-bg overflow-hidden">
@@ -237,6 +310,7 @@ export default function AppDashboardPage() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onAdd={handleAdd}
+        saving={savingLog}
       />
 
       <div className="relative z-10 max-w-6xl mx-auto px-6 py-14">
@@ -251,25 +325,53 @@ export default function AppDashboardPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-5">
-            <div className="flex items-center gap-2 text-slate-700">
-              🔥 <span className="font-semibold">Streak: {streak}</span>
+          <div className="flex items-center gap-4">
+            <div className="hidden sm:flex items-center gap-2 text-slate-700">
+              🔥 <span className="font-semibold">Streak: {currentStreak}</span>
             </div>
+
+            <button
+              onClick={async () => {
+                await logoutUser();
+                router.replace("/");
+              }}
+              className="px-4 py-2 rounded-full bg-white/75 border border-slate-200 text-slate-700 font-semibold hover:shadow transition"
+            >
+              Logout
+            </button>
+
             <div className="flex items-center gap-2">
               <div className="w-9 h-9 rounded-full bg-slate-200" />
-              <span className="font-semibold text-slate-700">Megha</span>
+              <span className="font-semibold text-slate-700">
+                {user?.name || "User"}
+              </span>
               <span className="text-slate-400">▾</span>
             </div>
           </div>
         </div>
 
+        {/* Error Banner */}
+        {error ? (
+          <div className="mt-6 glass rounded-2xl px-5 py-4 border border-red-200 bg-red-50/60 text-red-700 font-semibold">
+            {error}
+          </div>
+        ) : null}
+
         {/* Stats */}
         <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            { label: "Current Streak", value: streak, unit: "Days" },
-            { label: "Days Logged", value: daysLogged, unit: "Entries" },
-            { label: "Total Words", value: words.toLocaleString(), unit: "" },
-            { label: "Progress This Week", value: "3 / 7", unit: "Days" },
+            { label: "Current Streak", value: currentStreak, unit: "Days" },
+            { label: "Days Logged", value: daysLogged, unit: "Days" },
+            {
+              label: "Total Words",
+              value: totalWords.toLocaleString(),
+              unit: "",
+            },
+            {
+              label: "Progress This Week",
+              value: `${progressThisWeek} / ${weeklyTarget}`,
+              unit: "Days",
+            },
           ].map((s, idx) => (
             <motion.div
               key={idx}
@@ -305,8 +407,11 @@ export default function AppDashboardPage() {
             </motion.button>
           </div>
 
-          {/* Empty state */}
-          {logs.length === 0 ? (
+          {loadingLogs ? (
+            <div className="mt-10 text-center py-14 text-slate-600 font-semibold">
+              Fetching your logs...
+            </div>
+          ) : logs.length === 0 ? (
             <div className="mt-10 text-center py-14">
               <div className="text-3xl">🌱</div>
               <div className="mt-3 font-semibold text-slate-800 text-xl">
@@ -332,9 +437,9 @@ export default function AppDashboardPage() {
                 >
                   <div className="flex items-start gap-4">
                     <div className="w-11 h-11 rounded-full bg-indigo-100 flex items-center justify-center">
-                      {log.tag === "work"
+                      {log.tag === "WORK"
                         ? "🟣"
-                        : log.tag === "content"
+                        : log.tag === "CONTENT"
                         ? "🟪"
                         : "🔵"}
                     </div>
@@ -347,32 +452,23 @@ export default function AppDashboardPage() {
                         <TagPill tag={log.tag} />
                       </div>
 
-                      {log.desc ? (
+                      {log.description ? (
                         <div className="text-slate-600 text-sm mt-1 leading-relaxed">
-                          {log.desc}
+                          {log.description}
                         </div>
                       ) : null}
 
                       <div className="text-slate-500 text-xs mt-2">
-                        {log.date}
+                        {formatDate(log.createdAt)}
                       </div>
                     </div>
                   </div>
 
-                  {/* Actions */}
                   <div className="flex gap-3 text-slate-500">
                     <button
                       className="w-9 h-9 rounded-xl bg-white/80 border border-slate-200 hover:shadow transition"
-                      title="Edit"
-                    >
-                      ✏️
-                    </button>
-                    <button
-                      className="w-9 h-9 rounded-xl bg-white/80 border border-slate-200 hover:shadow transition"
                       title="Delete"
-                      onClick={() =>
-                        setLogs((prev) => prev.filter((x) => x.id !== log.id))
-                      }
+                      onClick={() => handleDelete(log.id)}
                     >
                       🗑️
                     </button>

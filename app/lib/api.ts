@@ -9,6 +9,7 @@ export async function apiFetch<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
     ...options,
     headers: {
       "Content-Type": "application/json",
